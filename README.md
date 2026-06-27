@@ -1,4 +1,4 @@
-# twofingers
+# two-fingers
 
 Chrome-style **pinch-to-zoom** for VSCode — magnify with a trackpad pinch, pan
 with two fingers, snap back to 100%.
@@ -8,8 +8,9 @@ only that editor magnifies, with the content clipped to the pane and panning
 kept inside it. Each editor remembers its own zoom independently. Non-editor
 areas (explorer, menus, status bar) are deliberately left alone.
 
-While an editor is zoomed, a small **↺ reset button** appears in its top-right
-corner — one click snaps that editor back to 100%.
+While an editor is zoomed, a small toolbar appears in its top-right corner: a
+**live `150%` readout** (click to snap back to 100%) and a **⚙ gear** that opens
+the settings panel.
 
 ## What it does (and doesn't)
 
@@ -20,7 +21,7 @@ what this is.
 
 > **Why emulation?** VSCode's workbench renderer is **sandboxed**, so injected
 > JS cannot reach Electron's `webFrame` to turn on *native* pinch zoom. Instead
-> we drive a CSS `transform: scale()` on the workbench root from the trackpad
+> we drive a CSS `transform: scale()` on the editor pane from the trackpad
 > pinch (which the browser delivers as a `ctrl`+wheel event). Pure DOM/CSS, so
 > it works inside the sandbox.
 
@@ -42,10 +43,10 @@ what this is.
 
 ## Try it first (no install)
 
-Paste the contents of [`inject/twofingers.js`](inject/twofingers.js) into
-**Help → Toggle Developer Tools → Console** and press Enter, then pinch over an
-editor / the terminal / the Claude Code panel. It lasts until the next reload —
-a zero-commitment way to judge the feel before installing.
+Paste the contents of [`inject/two-fingers.js`](inject/two-fingers.js) into
+**Help → Toggle Developer Tools → Console** and press Enter, then pinch over a
+code editor. It lasts until the next reload — a zero-commitment way to judge the
+feel before installing.
 
 ## Install (persistent)
 
@@ -53,7 +54,7 @@ a zero-commitment way to judge the feel before installing.
 2. Add the import to `settings.json` (adjust the path):
    ```json
    "vscode_custom_css.imports": [
-     "file:///d:/projects/twofingers/inject/twofingers.js"
+     "file:///d:/projects/twofingers/inject/two-fingers.js"
    ]
    ```
 3. Command Palette → **"Enable Custom CSS and JS"**, then reload.
@@ -64,16 +65,39 @@ After each VSCode update the patch is wiped — re-run **"Enable Custom CSS and 
 
 ## Usage
 
-- **Pinch in / out** on the trackpad — zoom the editor toward the cursor.
+- **Pinch in / out** (trackpad) — zoom the editor toward the cursor.
+- **`Ctrl` + mouse-wheel** — same zoom, for people on a mouse (a pinch arrives as
+  `Ctrl`+wheel anyway, so both go through the same path).
+- **`Ctrl+Alt+=` / `Ctrl+Alt+-`** — zoom in / out from the keyboard. Targets the
+  editor under the pointer, or the focused editor if the pointer is elsewhere.
 - **Two-finger drag** while zoomed — pan. Horizontal moves within the line;
   vertical scrolls the editor, so you can reach lines outside the slice that was
   on screen when you zoomed.
-- **↺ button** (top-right of a zoomed editor) — one click back to 100%.
-- **`Ctrl+Alt+0`** (`Cmd+Alt+0` on macOS) — reset every zoomed editor.
+- **`150%` button** (top-right of a zoomed editor) — click to reset to 100%.
+- **`Ctrl+Alt+0`** — reset every zoomed editor.
+- **`Ctrl+Alt+,`** — open / close the settings panel (also the ⚙ gear).
 
-## Tuning (`inject/twofingers.js`)
+> On a **Turkish keyboard layout**, `Ctrl+Alt` is AltGr, so `Ctrl+Alt+=/-` may
+> collide with character entry. Change `ZOOM_KEY_STEP` / the key codes in the
+> script if needed.
 
-- `MAX_SCALE` — maximum magnification (`3` = 300%, `5` = 500%).
-- `ZOOM_SENS` — pinch sensitivity (higher = faster).
-- `PAN_SENS` — pan speed.
-- `MIN_SCALE` — set below `1` to allow pinching out below 100%.
+## Settings
+
+Open the panel with the **⚙ gear** or **`Ctrl+Alt+,`**. Everything is saved to
+`localStorage`, so it persists across reloads (and VSCode updates):
+
+| Setting | Default | What it does |
+|---|---|---|
+| Auto-reset after idle | off | Ease all panes back to 100% after a period of no activity |
+| Idle delay (ms) | 500 | How long "no activity" waits before auto-reset |
+| Auto-hide buttons | on | Fade the pane toolbar when idle |
+| Outline zoomed pane | on | Subtle outline so you can tell which editor is magnified |
+| Motion | On | Animate zoom/pan/reset. `On` always, `Off` instant, `Auto` follows the OS "reduce motion" setting |
+| Invert scroll direction | off | Flip vertical pan |
+| Max zoom (×) | 5 | Maximum magnification |
+| Zoom sensitivity | 0.01 | Pinch speed (higher = faster) |
+| Pan speed | 1 | Two-finger pan speed |
+| Smoothing (0–1) | 0.35 | Animation easing (higher = snappier) |
+| Reset glide | 0.1 | Speed of the zoom-out on reset (lower = slower) |
+
+A **Reset to defaults** button is at the bottom of the panel.
