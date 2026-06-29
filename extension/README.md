@@ -14,7 +14,7 @@ npm run package      # copies the script in, builds two-fingers-x.y.z.vsix
 Then install the `.vsix`: Extensions view → `...` → **Install from VSIX**, or
 
 ```bash
-code --install-extension two-fingers-0.1.2.vsix      # use code-insiders for Insiders
+code --install-extension two-fingers-0.1.3.vsix      # use code-insiders for Insiders
 ```
 
 Reload when prompted. On user-scope VS Code installs no admin is needed; on

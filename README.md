@@ -24,9 +24,8 @@ pokes at internals. Use it because it's handy and fun, not because it's bulletpr
   **⤢** button, `Ctrl+Alt+=`, or `Ctrl`+wheel/scroll starts the zoom, then
   drag / wheel / pinch to move around. (See limits.)
 - **Reset** — click the `%` readout in the corner, or `Ctrl+Alt+0`.
-- **Settings** — the **⚙** gear (or `Ctrl+Alt+,`) opens a panel: sensitivity,
-  max zoom, smoothing, auto-reset-on-idle, webview toggles, and more. Saved
-  across reloads.
+- **Settings** — the **⚙** gear (or `Ctrl+Alt+,`) opens a panel with everything
+  in [Settings](#settings) below; choices are saved across reloads.
 
 ## Try it first (no install)
 
@@ -40,17 +39,48 @@ The extension delivers the script and keeps it alive across VS Code updates.
 
 ```bash
 cd extension
-npm run package        # copies the script in and builds two-fingers-0.1.2.vsix
+npm run package        # copies the script in and builds two-fingers-0.1.3.vsix
 ```
 
 Install the `.vsix` (Extensions view → `···` → **Install from VSIX**, or
-`code --install-extension two-fingers-0.1.2.vsix` — use `code-insiders` for
+`code --install-extension two-fingers-0.1.3.vsix` — use `code-insiders` for
 Insiders), then **Reload** when prompted.
 
 - **No admin** on user-scope installs (the common case). System-scope
   (`Program Files`) installs need an elevated launch once — the extension tells
   you if a write is denied.
 - Commands: **two-fingers: Enable / Disable / Reapply** in the Command Palette.
+
+## Settings
+
+Open with the **⚙** gear or **`Ctrl+Alt+,`**. Everything is saved to
+`localStorage` (so it survives reloads and updates).
+
+| Setting | Default | What it does |
+|---|---|---|
+| **Zoom** | | |
+| Max zoom (×) | 5 | Maximum magnification |
+| Zoom sensitivity | 0.01 | Pinch / wheel zoom speed (higher = faster) |
+| Keyboard step (×) | 1.1 | Zoom factor per `Ctrl+Alt+=/-` press |
+| Pan speed | 1 | Two-finger / drag pan speed |
+| Invert scroll direction | off | Flip vertical pan |
+| **Motion** | | |
+| Motion | On | Animate zoom/pan/reset — `On`, `Auto` (follow OS reduce-motion), or `Off` (instant) |
+| Smoothing (0–1) | 0.35 | Animation easing (higher = snappier) |
+| Reset glide | 0.1 | Zoom-out speed on reset (lower = slower) |
+| **Auto-reset** | | |
+| Auto-reset after idle | off | Ease panes back to 100% after a spell of no activity |
+| Idle delay (ms) | 500 | How long "no activity" waits before auto-reset |
+| **Appearance** | | |
+| Outline zoomed pane | on | Border so you can tell which pane is magnified |
+| Auto-hide buttons | on | Fade the pane toolbar when idle |
+| **Webviews** | | |
+| Zoom webviews (previews) | on | Enable webview zoom |
+| Ctrl+wheel/scroll on webviews | on | Hold `Ctrl` + wheel/scroll over a webview to enter zoom |
+| Webview entry zoom (×) | 1.1 | Zoom level when entering a webview |
+| Webview button | Bottom-left | The ⤢ entry button's corner, or Off |
+
+A **Reset to defaults** button sits at the bottom of the panel.
 
 ## Limits (the honest part)
 

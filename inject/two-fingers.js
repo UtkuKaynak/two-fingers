@@ -650,21 +650,30 @@
   // --- settings panel -------------------------------------------------------
   let panel = null;
   const CONTROLS = [
-    { key: 'autoReset', label: 'Auto-reset after idle', type: 'bool' },
-    { key: 'idleMs', label: 'Idle delay (ms)', type: 'num', step: 50, min: 100, max: 5000 },
-    { key: 'autoHide', label: 'Auto-hide buttons', type: 'bool' },
-    { key: 'outline', label: 'Outline zoomed pane', type: 'bool' },
-    { key: 'motion', label: 'Motion', type: 'select',
-      options: [{ value: 'on', label: 'On' }, { value: 'auto', label: 'Auto (OS)' }, { value: 'off', label: 'Off' }] },
-    { key: 'invertScroll', label: 'Invert scroll direction', type: 'bool' },
+    { type: 'header', label: 'Zoom' },
     { key: 'maxScale', label: 'Max zoom (×)', type: 'num', step: 0.5, min: 1.5, max: 20 },
     { key: 'zoomSens', label: 'Zoom sensitivity', type: 'num', step: 0.002, min: 0.002, max: 0.05 },
+    { key: 'keyStep', label: 'Keyboard step (×)', type: 'num', step: 0.05, min: 1.02, max: 2 },
     { key: 'panSens', label: 'Pan speed', type: 'num', step: 0.1, min: 0.1, max: 5 },
+    { key: 'invertScroll', label: 'Invert scroll direction', type: 'bool' },
+
+    { type: 'header', label: 'Motion' },
+    { key: 'motion', label: 'Motion', type: 'select',
+      options: [{ value: 'on', label: 'On' }, { value: 'auto', label: 'Auto (OS)' }, { value: 'off', label: 'Off' }] },
     { key: 'lerp', label: 'Smoothing (0–1)', type: 'num', step: 0.05, min: 0.05, max: 1 },
     { key: 'resetLerp', label: 'Reset glide (lower=slower)', type: 'num', step: 0.02, min: 0.02, max: 0.6 },
+
+    { type: 'header', label: 'Auto-reset' },
+    { key: 'autoReset', label: 'Auto-reset after idle', type: 'bool' },
+    { key: 'idleMs', label: 'Idle delay (ms)', type: 'num', step: 50, min: 100, max: 5000 },
+
+    { type: 'header', label: 'Appearance' },
+    { key: 'outline', label: 'Outline zoomed pane', type: 'bool' },
+    { key: 'autoHide', label: 'Auto-hide buttons', type: 'bool' },
+
+    { type: 'header', label: 'Webviews' },
     { key: 'webviewZoom', label: 'Zoom webviews (previews)', type: 'bool' },
     { key: 'webviewWheel', label: 'Ctrl+wheel/scroll on webviews', type: 'bool' },
-    { key: 'keyStep', label: 'Keyboard step (×)', type: 'num', step: 0.05, min: 1.02, max: 2 },
     { key: 'webviewEntry', label: 'Webview entry zoom (×)', type: 'num', step: 0.1, min: 1, max: 5 },
     { key: 'buttonPos', label: 'Webview button', type: 'select',
       options: [
@@ -701,7 +710,8 @@
     header.appendChild(close);
     panel.appendChild(header);
 
-    CONTROLS.forEach((c) => panel.appendChild(buildRow(c)));
+    CONTROLS.forEach((c) =>
+      panel.appendChild(c.type === 'header' ? buildHeader(c) : buildRow(c)));
 
     const reset = document.createElement('button');
     reset.textContent = 'Reset to defaults';
@@ -721,6 +731,15 @@
     ['mousedown', 'wheel', 'click'].forEach((t) =>
       panel.addEventListener(t, (e) => e.stopPropagation()));
     document.body.appendChild(panel);
+  }
+
+  function buildHeader(c) {
+    const h = document.createElement('div');
+    h.textContent = c.label;
+    h.style.cssText =
+      'margin-top:6px;font:700 10px/1.8 sans-serif;letter-spacing:.06em;' +
+      'text-transform:uppercase;color:#9aa0a6;border-bottom:1px solid #444;';
+    return h;
   }
 
   function buildRow(c) {
