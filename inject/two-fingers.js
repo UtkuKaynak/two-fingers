@@ -48,6 +48,7 @@
     webviewWheel: true,  // Ctrl + wheel / two-finger scroll over a webview zooms it
     keyStep: 1.1,        // keyboard zoom factor per press (~10% steps)
     webviewEntry: 1.1,   // zoom level when entering a webview via ⤢ / keyboard
+    buttonPos: 'bottom-left', // ⤢ entry button: off | {top,bottom}-{left,right}
   };
   let settings = loadSettings();
 
@@ -590,13 +591,15 @@
       const ov = ensureWebviewOverlay(el);
       const visible = isVisible(el);
       const zoomed = paneZoomed(el);
-      // ⤢ button: only when visible and not already zoomed.
-      if (!visible || zoomed) {
+      // ⤢ button: only when visible, not zoomed, and not turned off. Position is
+      // a configurable corner — no single spot avoids every webview's own UI.
+      if (settings.buttonPos === 'off' || !visible || zoomed) {
         btn.style.display = 'none';
       } else {
         const r = el.getBoundingClientRect();
-        btn.style.left = r.left + r.width - 36 + 'px';
-        btn.style.top = r.top + 8 + 'px';
+        const m = 8, sz = 28, pos = settings.buttonPos;
+        btn.style.left = (pos.endsWith('left') ? r.left + m : r.left + r.width - sz - m) + 'px';
+        btn.style.top = (pos.startsWith('top') ? r.top + m : r.top + r.height - sz - m) + 'px';
         btn.style.display = 'flex';
       }
       // Overlay: cover the clip region (parent, unaffected by the iframe's own
@@ -663,6 +666,14 @@
     { key: 'webviewWheel', label: 'Ctrl+wheel/scroll on webviews', type: 'bool' },
     { key: 'keyStep', label: 'Keyboard step (×)', type: 'num', step: 0.05, min: 1.02, max: 2 },
     { key: 'webviewEntry', label: 'Webview entry zoom (×)', type: 'num', step: 0.1, min: 1, max: 5 },
+    { key: 'buttonPos', label: 'Webview button', type: 'select',
+      options: [
+        { value: 'off', label: 'Off' },
+        { value: 'top-left', label: 'Top-left' },
+        { value: 'top-right', label: 'Top-right' },
+        { value: 'bottom-left', label: 'Bottom-left' },
+        { value: 'bottom-right', label: 'Bottom-right' },
+      ] },
   ];
 
   function buildPanel() {

@@ -1,0 +1,6 @@
+build.js
+.vscode/**
+node_modules/**
+**/*.map
+.gitignore
+*.vsix

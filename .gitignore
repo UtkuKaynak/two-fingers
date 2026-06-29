@@ -9,3 +9,8 @@ Thumbs.db
 
 # Tooling
 .serena/
+
+# Extension build artifacts (two-fingers.js is copied from inject/ at build time)
+extension/two-fingers.js
+extension/node_modules/
+extension/*.vsix
