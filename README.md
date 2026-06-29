@@ -32,13 +32,14 @@ what this is.
 - **Clicking while zoomed** may mis-place the text cursor in editors (Monaco's
   mouse math assumes 1:1 pixels). Fine for "zoom → glance → zoom back"; less
   ideal for editing while magnified.
-- **Webviews can't be zoomed.** Anything rendered in a webview — the Claude Code
-  panel, the extension-details/store pages, Markdown preview, the Settings UI —
-  is an isolated, cross-origin, sandboxed `<iframe>`. Pinch events fire *inside*
-  that iframe and never reach our top-level script, and we can't attach a
-  listener inside it. This is the one case native pinch (`webFrame`) would have
-  covered, but the sandbox blocks that path. Editors and the native workbench UI
-  work; webview content does not.
+- **Webviews zoom too, with limits.** Webview-based views (Markdown preview, the
+  Claude Code panel, the Settings UI) are isolated cross-origin `<iframe>`s, so a
+  *gesture* can't start a zoom there (the events fire inside the iframe). Enter
+  with the **⤢ button**, **`Ctrl+Alt+=`**, or **`Ctrl`+wheel/scroll** (with focus
+  outside the iframe); a capture overlay then drives zoom/pan. While zoomed the
+  view is **non-interactive** (overlay on top), and you can only pan within the
+  **currently-visible** region (we can't scroll inside a cross-origin iframe).
+  Best for read-only previews.
 - No relayout, real two-finger pan, instant reset.
 
 ## Try it first (no install)
@@ -76,10 +77,14 @@ After each VSCode update the patch is wiped — re-run **"Enable Custom CSS and 
 - **`150%` button** (top-right of a zoomed editor) — click to reset to 100%.
 - **`Ctrl+Alt+0`** — reset every zoomed editor.
 - **`Ctrl+Alt+,`** — open / close the settings panel (also the ⚙ gear).
+- **Webviews** (previews, Claude Code, Settings UI): click the **⤢ button** on the
+  view, or `Ctrl+Alt+=`, or hold `Ctrl` and wheel/two-finger-scroll over it (with
+  focus outside the iframe). Then drag / wheel / pinch to pan and zoom; `100%`
+  resets. See the webview note under Trade-offs for the limits.
 
 > On a **Turkish keyboard layout**, `Ctrl+Alt` is AltGr, so `Ctrl+Alt+=/-` may
-> collide with character entry. Change `ZOOM_KEY_STEP` / the key codes in the
-> script if needed.
+> collide with character entry. Adjust **Keyboard step** in settings, or the key
+> codes in the script, if needed.
 
 ## Settings
 
@@ -99,5 +104,9 @@ Open the panel with the **⚙ gear** or **`Ctrl+Alt+,`**. Everything is saved to
 | Pan speed | 1 | Two-finger pan speed |
 | Smoothing (0–1) | 0.35 | Animation easing (higher = snappier) |
 | Reset glide | 0.1 | Speed of the zoom-out on reset (lower = slower) |
+| Zoom webviews (previews) | on | Enable the ⤢ button and webview zoom |
+| Ctrl+wheel/scroll on webviews | on | Hold `Ctrl` + wheel/scroll over a webview to enter zoom |
+| Keyboard step (×) | 1.1 | Zoom factor per `Ctrl+Alt+=/-` press |
+| Webview entry zoom (×) | 1.1 | Zoom level when entering a webview |
 
 A **Reset to defaults** button is at the bottom of the panel.

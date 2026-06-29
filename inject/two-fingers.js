@@ -27,8 +27,8 @@
   const MIN_SCALE = 1;        // never shrink below 100%
   const SHARPEN_MS = 160;     // idle delay before dropping to a crisp 2D raster
   const AUTOHIDE_MS = 2000;   // idle delay before fading the pane toolbar
-  const PANE_SELECTORS = '.editor-instance'; // editor only; webviews unreachable
-  const ZOOM_KEY_STEP = 1.25; // per keypress zoom factor
+  const PANE_SELECTORS = '.editor-instance';
+  const WEBVIEW_SELECTOR = 'iframe.webview'; // VSCode webview iframes (own layer)
 
   // --- persisted settings ---------------------------------------------------
   const LS_KEY = 'two-fingers.settings';
@@ -44,6 +44,10 @@
     panSens: 1,
     lerp: 0.35,
     resetLerp: 0.1,      // easing for the zoom-out/reset glide (lower = slower)
+    webviewZoom: true,   // allow zooming webview views (markdown preview, etc.)
+    webviewWheel: true,  // Ctrl + wheel / two-finger scroll over a webview zooms it
+    keyStep: 1.1,        // keyboard zoom factor per press (~10% steps)
+    webviewEntry: 1.1,   // zoom level when entering a webview via ⤢ / keyboard
   };
   let settings = loadSettings();
 
@@ -66,8 +70,12 @@
 
   // --- state ----------------------------------------------------------------
   const panes = new Map();              // clipEl -> per-pane state
+  const entryButtons = new Map();       // webview iframe -> ⤢ entry button
+  const webviewOverlays = new Map();    // webview iframe -> capture overlay
+  let ctrlHeld = false;                 // physical Ctrl down (for wheel-entry)
   let lastPointer = null;               // {x, y} for keyboard-zoom targeting
   let idleTimer = 0;
+  let inScan = false;                   // guards cleanup() from re-entering scan
 
   // A pane is zoomable only if it's a real text/code editor: it contains a
   // Monaco editor and NO iframe. This excludes webview editors (the Claude Code
@@ -75,6 +83,73 @@
   // iframes is laggy and we can't capture gestures inside them anyway.
   function isZoomable(el) {
     return !!(el && el.querySelector('.monaco-editor') && !el.querySelector('iframe'));
+  }
+
+  // A webview pane: an editor hosting an iframe and no Monaco (Markdown preview,
+  // custom editors, the Settings UI, the Claude Code panel). Gestures can't
+  // reach inside the iframe, so these are entered via the ⤢ button / keyboard
+  // and then driven by a capture overlay.
+  // A webview pane's transform target is the webview <iframe> itself (it lives in
+  // a separate overlay layer, not inside .editor-instance). Its parent is a
+  // fixed, overflow:hidden wrapper sized to the editor region, which clips it.
+  function isWebviewPane(el) { return !!(el && el.tagName === 'IFRAME'); }
+  function isPane(el) { return isZoomable(el) || (settings.webviewZoom && isWebviewPane(el)); }
+
+  function isVisible(el) {
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity) < 0.02) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 40 || r.height < 40) return false;
+    // Also reject off-screen (a hidden tab may be parked outside the viewport).
+    return r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight;
+  }
+
+  // The zoom target (text editor-instance OR webview iframe) at a DOM element.
+  function paneTargetFromElement(el) {
+    if (!el || !el.closest) return null;
+    const ed = el.closest('.editor-instance');
+    if (ed && isZoomable(ed)) return ed;
+    if (settings.webviewZoom) {
+      const wv = el.closest(WEBVIEW_SELECTOR);
+      if (wv && isVisible(wv)) return wv;
+    }
+    return null;
+  }
+
+  // The pane in the active editor group (the focused split) — text or webview.
+  function activeTarget() {
+    const group = document.querySelector('.editor-group-container.active');
+    if (!group) return null;
+    const ei = group.querySelector('.editor-instance');
+    if (ei && isZoomable(ei)) return ei; // text editor in the active group
+    if (settings.webviewZoom) {
+      // Webview group: match by the visible webview iframe over this region.
+      const gr = group.getBoundingClientRect();
+      const cx = gr.left + gr.width / 2, cy = gr.top + gr.height / 2;
+      for (const f of document.querySelectorAll(WEBVIEW_SELECTOR)) {
+        if (!isVisible(f)) continue;
+        const r = f.getBoundingClientRect();
+        if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) return f;
+      }
+    }
+    return null;
+  }
+
+  // Best target for a keyboard shortcut: the focused split first (so it keeps
+  // acting on what you're working in), then under the pointer, then any webview.
+  function getTarget() {
+    const a = activeTarget();
+    if (a) return a;
+    if (lastPointer) {
+      const t = paneTargetFromElement(document.elementFromPoint(lastPointer.x, lastPointer.y));
+      if (t) return t;
+    }
+    const ed = activeEditor();
+    if (ed) return ed;
+    if (settings.webviewZoom) {
+      for (const f of document.querySelectorAll(WEBVIEW_SELECTOR)) if (isVisible(f)) return f;
+    }
+    return null;
   }
 
   function resolve(target) {
@@ -88,16 +163,16 @@
   function activeEditor() {
     const a = document.activeElement;
     const ei = a && a.closest ? a.closest(PANE_SELECTORS) : null;
-    if (ei && isZoomable(ei)) return ei;
+    if (ei && isPane(ei)) return ei;
     const focused = document.querySelector('.editor-instance .monaco-editor.focused');
     if (focused) {
       const p = focused.closest(PANE_SELECTORS);
-      if (p && isZoomable(p)) return p;
+      if (p && isPane(p)) return p;
     }
     const active = document.querySelector('.editor-group-container.active .editor-instance');
-    if (active && isZoomable(active)) return active;
+    if (active && isPane(active)) return active;
     for (const el of document.querySelectorAll(PANE_SELECTORS)) {
-      if (isZoomable(el)) return el;
+      if (isPane(el)) return el;
     }
     return null;
   }
@@ -116,6 +191,7 @@
       scale: 1, panX: 0, panY: 0,      // current (animated)
       tScale: 1, tPanX: 0, tPanY: 0,   // target
       animating: false, sharpenTimer: 0, hideTimer: 0, resetting: false,
+      webview: isWebviewPane(transformEl),
       toolbar: null, label: null, frame: null,
     };
     transformEl.style.transformOrigin = '0 0';
@@ -208,7 +284,7 @@
 
   // Refresh overlays for all panes immediately when a setting changes (so e.g.
   // toggling the outline is visible without first interacting with the pane).
-  function applySettingsLive() { panes.forEach(syncOverlays); }
+  function applySettingsLive() { panes.forEach(syncOverlays); scanWebviewPanes(); }
   function wake(s) {
     const bar = s.toolbar;
     if (!bar) return;
@@ -240,6 +316,10 @@
     const el = s.transformEl;
     if (s.scale <= MIN_SCALE + 0.0005) {
       el.style.transform = '';
+    } else if (s.webview) {
+      // Keep webviews on a GPU layer so panning (translate only) stays smooth
+      // and doesn't re-raster the iframe.
+      el.style.transform = `translate3d(${s.panX}px, ${s.panY}px, 0) scale(${s.scale})`;
     } else {
       el.style.transform = settled
         ? `translate(${s.panX}px, ${s.panY}px) scale(${s.scale})`
@@ -249,7 +329,11 @@
   }
 
   function step(s) {
-    const k = reducedMotion() ? 1 : (s.resetting ? settings.resetLerp : settings.lerp);
+    // Webviews animate instantly: scaling an iframe re-rasters, so a multi-frame
+    // glide is laggy — snap to the target in one step.
+    const k = s.webview ? 1
+      : reducedMotion() ? 1
+      : (s.resetting ? settings.resetLerp : settings.lerp);
     s.scale += (s.tScale - s.scale) * k;
     s.panX += (s.tPanX - s.panX) * k;
     s.panY += (s.tPanY - s.panY) * k;
@@ -280,6 +364,12 @@
   }
 
   function startAnim(s) {
+    if (s.webview) {
+      const ov = ensureWebviewOverlay(s.transformEl);
+      positionOverlay(ov, s.baseLeft, s.baseTop, s.baseW, s.baseH);
+      ov.style.display = 'block';
+      ov.style.pointerEvents = overlayActive(s.transformEl) ? 'auto' : 'none';
+    }
     syncOverlays(s);
     s.transformEl.style.willChange = 'transform';
     clearTimeout(s.sharpenTimer);
@@ -290,6 +380,8 @@
   }
 
   function cleanup(s) {
+    if (s.dead) return;
+    s.dead = true;
     clearTimeout(s.sharpenTimer);
     clearTimeout(s.hideTimer);
     s.transformEl.style.transform = '';
@@ -297,11 +389,25 @@
     s.clipEl.style.overflow = s.prevOverflow;
     if (s.toolbar) { s.toolbar.remove(); s.toolbar = null; }
     if (s.frame) { s.frame.remove(); s.frame = null; }
+    const wasWebview = s.webview, iframe = s.transformEl;
     panes.delete(s.clipEl);
+    if (wasWebview) { syncOneOverlay(iframe); if (!inScan) scanWebviewPanes(); }
   }
 
   function resetPane(s) { s.resetting = true; s.tScale = MIN_SCALE; s.tPanX = 0; s.tPanY = 0; startAnim(s); }
   function resetAll() { panes.forEach(resetPane); }
+
+  // Snap a pane to 100% immediately (no glide). Used before VSCode needs the
+  // editor at true coordinates — e.g. opening the right-click context menu,
+  // which mis-anchors while the editor is transformed.
+  function instantReset(s) {
+    s.animating = false;
+    s.scale = 1; s.tScale = 1;
+    s.panX = s.panY = s.tPanX = s.tPanY = 0;
+    s.transformEl.style.transform = '';
+    s.transformEl.style.willChange = 'auto';
+    cleanup(s);
+  }
 
   function bumpIdle() {
     if (!settings.autoReset) return;
@@ -343,13 +449,7 @@
 
   // Keyboard zoom: target the editor under the pointer, else the active editor.
   function keyboardZoom(factor) {
-    let el = null;
-    if (lastPointer) {
-      const hit = document.elementFromPoint(lastPointer.x, lastPointer.y);
-      const cand = hit && hit.closest ? hit.closest(PANE_SELECTORS) : null;
-      if (cand && isZoomable(cand)) el = cand;
-    }
-    if (!el) el = activeEditor();
+    const el = getTarget();
     if (!el || !el.parentElement) return;
     const s = getState(el, true);
     const r = el.getBoundingClientRect();
@@ -359,6 +459,189 @@
     const fx = overPointer ? lastPointer.x : r.left + r.width / 2;
     const fy = overPointer ? lastPointer.y : r.top + r.height / 2;
     zoomAt(s, fx, fy, factor);
+  }
+
+  // --- webview views --------------------------------------------------------
+  // Webviews can't be entered by a gesture (events fire inside the iframe), so
+  // a small ⤢ button on each webview pane (or Ctrl+Alt+=) starts the zoom. Once
+  // zoomed, a transparent capture overlay sits over the iframe and drives
+  // zoom/pan from both mouse and trackpad. Reset removes the overlay.
+  function paneZoomed(el) {
+    const s = el.parentElement && panes.get(el.parentElement);
+    return !!(s && s.tScale > MIN_SCALE + 0.0005);
+  }
+
+  function enterWebviewZoom(el) {
+    if (!el || !el.parentElement) return;
+    const s = getState(el, true);
+    const btn = entryButtons.get(el);
+    if (btn) btn.style.display = 'none';
+    const r = el.getBoundingClientRect();
+    zoomAt(s, r.left + r.width / 2, r.top + r.height / 2, settings.webviewEntry);
+  }
+
+  function makeEntryButton(el) {
+    const b = document.createElement('button');
+    b.textContent = '⤢';
+    b.title = 'Zoom this view (two-fingers)';
+    styleButton(b, 'position:fixed;z-index:2147483640;width:28px;display:none;opacity:0.5;transition:opacity .15s;');
+    b.addEventListener('mouseenter', () => { b.style.opacity = '1'; });
+    b.addEventListener('mouseleave', () => { b.style.opacity = '0.5'; });
+    bind(b, () => enterWebviewZoom(el));
+    document.body.appendChild(b);
+    return b;
+  }
+
+  // The overlay is "active" (intercepts input) when the pane is zoomed, or — for
+  // mouse wheel-entry — while Ctrl is physically held with that setting on.
+  function overlayActive(iframe) {
+    return paneZoomed(iframe) ||
+      (settings.webviewZoom && settings.webviewWheel && ctrlHeld);
+  }
+  function positionOverlay(ov, l, t, w, h) {
+    ov.style.left = l + 'px';
+    ov.style.top = t + 'px';
+    ov.style.width = w + 'px';
+    ov.style.height = h + 'px';
+  }
+  function syncOneOverlay(iframe) {
+    const ov = webviewOverlays.get(iframe);
+    if (ov) ov.style.pointerEvents = overlayActive(iframe) ? 'auto' : 'none';
+  }
+  function updateArming() {
+    webviewOverlays.forEach((ov, iframe) => {
+      ov.style.pointerEvents = overlayActive(iframe) ? 'auto' : 'none';
+    });
+  }
+
+  // One persistent capture overlay per webview. pointer-events stays 'none' (the
+  // webview is fully interactive) unless active — see overlayActive(). It drives
+  // zoom (Ctrl+wheel / pinch) and pan (wheel / click-drag).
+  function ensureWebviewOverlay(iframe) {
+    let ov = webviewOverlays.get(iframe);
+    if (ov) return ov;
+    ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;z-index:2147483644;display:none;cursor:grab;background:transparent;pointer-events:none;';
+    ov.addEventListener('wheel', (e) => {
+      const zoomed = paneZoomed(iframe);
+      if (!zoomed && !(settings.webviewWheel && ctrlHeld)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.ctrlKey) {
+        zoomAt(getState(iframe, true), e.clientX, e.clientY, Math.exp(-e.deltaY * settings.zoomSens));
+      } else if (zoomed) {
+        const s = panes.get(iframe.parentElement);
+        if (s) {
+          const inv = settings.invertScroll ? -1 : 1;
+          s.tPanX -= e.deltaX * settings.panSens;
+          s.tPanY -= e.deltaY * settings.panSens * inv;
+          clampTarget(s);
+          startAnim(s);
+          bumpIdle();
+        }
+      }
+    }, { passive: false });
+    // Mouse click-drag to pan (only while zoomed; don't hijack clicks otherwise).
+    ov.addEventListener('mousedown', (e) => {
+      if (!paneZoomed(iframe)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const s = panes.get(iframe.parentElement);
+      if (!s) return;
+      const sx = e.clientX, sy = e.clientY, px = s.tPanX, py = s.tPanY;
+      ov.style.cursor = 'grabbing';
+      const mm = (ev) => {
+        s.tPanX = px + (ev.clientX - sx);
+        s.tPanY = py + (ev.clientY - sy);
+        clampTarget(s);
+        startAnim(s);
+        bumpIdle();
+      };
+      const mu = () => {
+        ov.style.cursor = 'grab';
+        window.removeEventListener('mousemove', mm, true);
+        window.removeEventListener('mouseup', mu, true);
+      };
+      window.addEventListener('mousemove', mm, true);
+      window.addEventListener('mouseup', mu, true);
+    });
+    document.body.appendChild(ov);
+    webviewOverlays.set(iframe, ov);
+    return ov;
+  }
+
+  // Find webview panes and keep a ⤢ entry button pinned to each (hidden while
+  // that pane is zoomed). Runs on an interval since panes come and go.
+  function scanWebviewPanes() {
+    inScan = true;
+    try {
+    if (!settings.webviewZoom) {
+      entryButtons.forEach((btn) => btn.remove());
+      entryButtons.clear();
+      webviewOverlays.forEach((ov) => { ov.style.display = 'none'; ov.style.pointerEvents = 'none'; });
+      return;
+    }
+    const seen = new Set();
+    document.querySelectorAll(WEBVIEW_SELECTOR).forEach((el) => {
+      if (!el.parentElement) return;
+      seen.add(el);
+      let btn = entryButtons.get(el);
+      if (!btn) { btn = makeEntryButton(el); entryButtons.set(el, btn); }
+      const ov = ensureWebviewOverlay(el);
+      const visible = isVisible(el);
+      const zoomed = paneZoomed(el);
+      // ⤢ button: only when visible and not already zoomed.
+      if (!visible || zoomed) {
+        btn.style.display = 'none';
+      } else {
+        const r = el.getBoundingClientRect();
+        btn.style.left = r.left + r.width - 36 + 'px';
+        btn.style.top = r.top + 8 + 'px';
+        btn.style.display = 'flex';
+      }
+      // Overlay: cover the clip region (parent, unaffected by the iframe's own
+      // transform) and arm per overlayActive().
+      if (!visible) {
+        ov.style.display = 'none';
+        ov.style.pointerEvents = 'none';
+      } else {
+        const pr = el.parentElement.getBoundingClientRect();
+        positionOverlay(ov, pr.left, pr.top, pr.width, pr.height);
+        ov.style.display = 'block';
+        ov.style.pointerEvents = overlayActive(el) ? 'auto' : 'none';
+      }
+    });
+    entryButtons.forEach((btn, el) => {
+      if (!seen.has(el) || !document.body.contains(el)) {
+        btn.remove();
+        entryButtons.delete(el);
+        const ov = webviewOverlays.get(el);
+        if (ov) { ov.remove(); webviewOverlays.delete(el); }
+      }
+    });
+    // A zoomed webview keeps its state across tab switches, but its toolbar and
+    // outline must follow the iframe's visibility — otherwise a hidden tab's
+    // overlays linger over (and its capture overlay hijacks) whatever tab now
+    // occupies the same area. (The capture overlay itself is handled above.)
+    panes.forEach((s) => {
+      if (!s.webview) return;
+      if (!document.contains(s.transformEl)) {
+        cleanup(s); // VSCode replaced the iframe — drop the stale zoom state
+        return;
+      }
+      if (isVisible(s.transformEl)) {
+        // Re-assert the transform; VSCode may wipe it when re-showing a webview,
+        // which otherwise leaves the % readout out of sync with an unzoomed view.
+        if (s.tScale > MIN_SCALE + 0.0005) render(s, true);
+        syncOverlays(s);
+      } else {
+        if (s.toolbar) s.toolbar.style.display = 'none';
+        if (s.frame) s.frame.style.display = 'none';
+      }
+    });
+    } finally {
+      inScan = false;
+    }
   }
 
   // --- settings panel -------------------------------------------------------
@@ -376,6 +659,10 @@
     { key: 'panSens', label: 'Pan speed', type: 'num', step: 0.1, min: 0.1, max: 5 },
     { key: 'lerp', label: 'Smoothing (0–1)', type: 'num', step: 0.05, min: 0.05, max: 1 },
     { key: 'resetLerp', label: 'Reset glide (lower=slower)', type: 'num', step: 0.02, min: 0.02, max: 0.6 },
+    { key: 'webviewZoom', label: 'Zoom webviews (previews)', type: 'bool' },
+    { key: 'webviewWheel', label: 'Ctrl+wheel/scroll on webviews', type: 'bool' },
+    { key: 'keyStep', label: 'Keyboard step (×)', type: 'num', step: 0.05, min: 1.02, max: 2 },
+    { key: 'webviewEntry', label: 'Webview entry zoom (×)', type: 'num', step: 0.1, min: 1, max: 5 },
   ];
 
   function buildPanel() {
@@ -567,13 +854,49 @@
     if (code === 'Digit0' || code === 'Numpad0' || e.key === '0') {
       e.preventDefault(); e.stopPropagation(); resetAll();
     } else if (code === 'Equal' || code === 'NumpadAdd') {
-      e.preventDefault(); e.stopPropagation(); keyboardZoom(ZOOM_KEY_STEP);
+      e.preventDefault(); e.stopPropagation(); keyboardZoom(settings.keyStep);
     } else if (code === 'Minus' || code === 'NumpadSubtract') {
-      e.preventDefault(); e.stopPropagation(); keyboardZoom(1 / ZOOM_KEY_STEP);
+      e.preventDefault(); e.stopPropagation(); keyboardZoom(1 / settings.keyStep);
     } else if (code === 'Comma') {
       e.preventDefault(); e.stopPropagation(); togglePanel();
     }
   }, true);
+
+  // Right-clicking a transformed editor mis-anchors VSCode's context menu, so
+  // snap that pane to 100% first (capture phase, before VSCode handles it).
+  window.addEventListener('contextmenu', (e) => {
+    const ed = e.target && e.target.closest ? e.target.closest(PANE_SELECTORS) : null;
+    if (!ed) return;
+    const s = panes.get(ed.parentElement);
+    if (s && !s.webview && s.tScale > MIN_SCALE) instantReset(s);
+  }, true);
+
+  // Coalesced rescan, so tab switches / focus changes refresh the overlays
+  // promptly instead of waiting for the 700ms poll.
+  let scanScheduled = false;
+  function scheduleScan() {
+    if (scanScheduled) return;
+    scanScheduled = true;
+    setTimeout(() => { scanScheduled = false; scanWebviewPanes(); }, 40);
+  }
+
+  // Track physical Ctrl so mouse Ctrl+wheel can arm the webview overlay. On the
+  // Ctrl press, rescan immediately so the overlay is correctly shown/positioned/
+  // armed *before* the Ctrl+scroll that follows (fixes the post-tab-switch race).
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Control' && !ctrlHeld) { ctrlHeld = true; scanWebviewPanes(); }
+  }, true);
+  window.addEventListener('keyup', (e) => {
+    if (e.key === 'Control' && ctrlHeld) { ctrlHeld = false; updateArming(); }
+  }, true);
+  window.addEventListener('blur', () => {
+    if (ctrlHeld) { ctrlHeld = false; updateArming(); }
+  });
+
+  scanWebviewPanes();
+  setInterval(scanWebviewPanes, 700);
+  window.addEventListener('resize', scheduleScan);
+  window.addEventListener('focusin', scheduleScan, true);
 
   console.log(TAG, 'active — pinch / Ctrl+wheel to zoom, Ctrl+Alt+, for settings');
 })();
